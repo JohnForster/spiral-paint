@@ -1,206 +1,186 @@
-import type { SpiralConfig } from "./config";
-import { Lattice } from "./lattice";
-import { sampleLine, spiralPolylines } from "./sample";
-import { clipToRect } from "./clip";
-import { buildAdjacency } from "./adjacency";
-import {
-  bboxContains,
-  bboxOf,
-  distanceSqToRings,
-  pointInRings,
-  polygonArea,
-  type BBox,
-  type Pt,
-  type Ring,
-} from "./polygon";
+import { arrange, type Arrangement } from "./arrangement";
+import { scenePolylines } from "./elements";
+import { poleOfInaccessibility } from "./interior";
+import { bboxContains, distanceSqToRings, pointInRings, type BBox, type Pt, type Ring } from "./polygon";
+import type { Scene } from "./scene";
 
-export const CENTRE_ID = "c";
-
-/** Pieces smaller than this (px²) are treated as clipping noise and dropped. */
-const MIN_PIECE_AREA = 1e-6;
+/** Faces smaller than this (px²) are merged into the neighbour they share the longest border with. */
+export const MIN_REGION_AREA = 1;
 
 export interface Region {
   id: string;
-  /** Outer ring first, then holes (even-odd). */
-  rings: Ring[];
+  /** One polygon per merged face, each [outer, ...holes]; outer rings share one orientation. */
+  polygons: Ring[][];
   area: number;
   bbox: BBox;
-  /** Canonical lattice cell, or null for the centre region. */
-  cell: [number, number] | null;
 }
 
 /**
- * One lattice edge: a piece of a single spiral between two crossings.
- * `family` "s" means the edge lies on the CW line s = s(line) between t(from)
- * and t(from + 1); "t" means it lies on t = t(line) between s(from) and s(from + 1).
+ * The paintable regions of a scene: faces of the polyline arrangement, with
+ * tiny faces merged away. Ids ("r0", "r1", …) are deterministic for a given
+ * scene but not stable across scene edits; files use interior points instead.
  */
-export interface Edge {
-  family: "s" | "t";
-  line: number;
-  from: number;
-  /** Line value (s for family "s", t for family "t"). */
-  value: number;
-  us: number[];
-  points: Pt[];
-}
-
 export class RegionSet {
-  readonly lattice: Lattice;
   readonly regions: Region[] = [];
   readonly byId = new Map<string, Region>();
-  /** Canvas pieces of each closed cell, keyed "i,j" (canonical). */
-  private readonly cellPieces = new Map<string, Region[]>();
-  private readonly edges = new Map<string, Edge>();
-  private adjacency: Map<string, Set<string>> | null = null;
+  /** Unclipped element polylines, for drawing the lines. */
+  readonly curves: Pt[][];
+  readonly arrangement: Arrangement;
+  private readonly regionOfFace: Region[] = [];
+  private readonly neighbourIds = new Map<string, Set<string>>();
+  private readonly grid: FaceGrid;
 
-  constructor(readonly config: SpiralConfig) {
-    this.lattice = new Lattice(config);
-    this.buildCentre();
-    this.buildCells();
+  constructor(readonly scene: Scene) {
+    this.curves = scenePolylines(scene);
+    this.arrangement = arrange(this.curves, scene.width, scene.height);
+    const { faces, adjacency } = this.arrangement;
+
+    // Merge tiny faces (union-find over faces, tracking area and border lengths per root).
+    const parent = faces.map((_, k) => k);
+    const find = (k: number): number => (parent[k] === k ? k : (parent[k] = find(parent[k]!)));
+    const area = faces.map((f) => f.area);
+    const border = adjacency.map((m) => new Map(m));
+    let merged = true;
+    while (merged) {
+      merged = false;
+      const small = faces.map((_, k) => k).filter((k) => find(k) === k && area[k]! < MIN_REGION_AREA);
+      small.sort((a, b) => area[a]! - area[b]!);
+      for (const k of small) {
+        if (find(k) !== k || area[k]! >= MIN_REGION_AREA) continue;
+        let target = -1;
+        let best = -1;
+        for (const [n, len] of border[k]!) if (len > best) (best = len), (target = n);
+        if (target < 0) continue;
+        parent[k] = target;
+        area[target]! += area[k]!;
+        for (const [n, len] of border[k]!) {
+          border[n]!.delete(k);
+          if (n === target) continue;
+          border[target]!.set(n, (border[target]!.get(n) ?? 0) + len);
+          border[n]!.set(target, (border[n]!.get(target) ?? 0) + len);
+        }
+        border[target]!.delete(k);
+        border[k]!.clear();
+        merged = true;
+      }
+    }
+
+    // Build regions in a deterministic order (top-to-bottom, left-to-right).
+    const members = new Map<number, number[]>();
+    faces.forEach((_, k) => {
+      const r = find(k);
+      let list = members.get(r);
+      if (!list) members.set(r, (list = []));
+      list.push(k);
+    });
+    const roots = [...members.keys()]
+      .map((r) => ({ r, bbox: unionBBox(members.get(r)!.map((f) => faces[f]!.bbox)) }))
+      .sort((a, b) => a.bbox.minY - b.bbox.minY || a.bbox.minX - b.bbox.minX);
+    const regionOfRoot = new Map<number, Region>();
+    roots.forEach(({ r, bbox }, k) => {
+      const list = members.get(r)!;
+      const region: Region = { id: `r${k}`, polygons: list.map((f) => faces[f]!.rings), area: area[r]!, bbox };
+      this.regions.push(region);
+      this.byId.set(region.id, region);
+      regionOfRoot.set(r, region);
+      for (const f of list) this.regionOfFace[f] = region;
+    });
+    for (const { r } of roots) {
+      const id = regionOfRoot.get(r)!.id;
+      this.neighbourIds.set(id, new Set([...border[r]!.keys()].map((n) => regionOfRoot.get(n)!.id)));
+    }
+    this.grid = new FaceGrid(faces.map((f) => f.bbox), scene.width, scene.height);
   }
 
   get width(): number {
-    return this.config.width;
+    return this.scene.width;
   }
 
   get height(): number {
-    return this.config.height;
+    return this.scene.height;
   }
 
-  /** The region containing a canvas point, or null outside the canvas (PLAN.md §3.7). */
+  /** The region containing a canvas point, or null outside the canvas. */
   locate(x: number, y: number): Region | null {
     if (!(x >= 0 && y >= 0 && x <= this.width && y <= this.height)) return null;
-    const st = this.lattice.toST(x, y);
-    if (!st) return this.byId.get(CENTRE_ID) ?? null;
-    return this.locateST(st[0], st[1], x, y);
-  }
-
-  /** Like locate, for a point whose (s, t) is already known exactly. */
-  locateST(s: number, t: number, x: number, y: number): Region | null {
-    const L = this.lattice;
-    const i = L.sIndex(s);
-    const j = L.tIndex(t);
-    if (!L.isClosed(i, j)) return this.byId.get(CENTRE_ID) ?? null;
-    const [ci, cj] = L.canon(i, j);
-    const pieces = this.cellPieces.get(`${ci},${cj}`);
-    if (!pieces || pieces.length === 0) return null;
-    if (pieces.length === 1) return pieces[0]!;
-    // Several pieces: pick the one containing the point; a point in the ≤ε gap
-    // between a true curve and its chord falls back to the nearest piece.
-    let best = pieces[0]!;
-    let bestDist = Infinity;
-    for (const p of pieces) {
-      if (bboxContains(p.bbox, x, y) && pointInRings(p.rings, x, y)) return p;
-      const d = distanceSqToRings(p.rings, x, y);
-      if (d < bestDist) {
-        bestDist = d;
-        best = p;
-      }
+    const faces = this.arrangement.faces;
+    const candidates = this.grid.query(x, y);
+    let nearest = -1;
+    let nearestDist = Infinity;
+    for (const f of candidates) {
+      const face = faces[f]!;
+      if (!bboxContains(face.bbox, x, y)) continue;
+      if (pointInRings(face.rings, x, y)) return this.regionOfFace[f]!;
     }
-    return best;
+    // On an edge (or in float noise along one): take the nearest face.
+    for (const f of candidates) {
+      const d = distanceSqToRings(faces[f]!.rings, x, y);
+      if (d < nearestDist) (nearestDist = d), (nearest = f);
+    }
+    return nearest >= 0 ? this.regionOfFace[nearest]! : null;
   }
 
-  /** Ids of regions sharing a boundary of positive length with `id` (PLAN.md §3.8). */
   neighbours(id: string): ReadonlySet<string> {
-    this.adjacency ??= buildAdjacency(this, this.edges.values());
-    return this.adjacency.get(id) ?? new Set();
+    return this.neighbourIds.get(id) ?? new Set();
   }
 
-  spiralPolylines(): Pt[][] {
-    return spiralPolylines(this.lattice);
+  /** A point well inside a region (in its largest polygon), used to store colours in files. */
+  interiorPoint(id: string): Pt {
+    const r = this.byId.get(id)!;
+    let largest = r.polygons[0]!;
+    let largestArea = -1;
+    for (const p of r.polygons) {
+      const b = unionBBox([bboxOfRing(p[0]!)]);
+      const a = (b.maxX - b.minX) * (b.maxY - b.minY);
+      if (a > largestArea) (largestArea = a), (largest = p);
+    }
+    return poleOfInaccessibility(largest);
   }
+}
 
-  /** Cached, canonically keyed edge on CW line s(i) between t(j) and t(j + 1). */
-  sEdge(i: number, j: number): Edge {
-    const L = this.lattice;
-    const [ci, cj] = L.canon(i, j);
-    return this.edge(`s${ci}:${cj}`, () => {
-      const value = L.s(ci);
-      const s = sampleLine(L, "s", value, (value + L.t(cj)) / 2, (value + L.t(cj + 1)) / 2, L.vertex(ci, cj), L.vertex(ci, cj + 1));
-      return { family: "s", line: ci, from: cj, value, ...s };
+/** Uniform grid over face bounding boxes for point queries. */
+class FaceGrid {
+  private readonly cell: number;
+  private readonly gw: number;
+  private readonly gh: number;
+  private readonly cells: number[][];
+
+  constructor(boxes: BBox[], width: number, height: number) {
+    this.cell = Math.max(4, Math.sqrt((width * height) / Math.max(1, boxes.length)) * 2);
+    this.gw = Math.ceil(width / this.cell) + 1;
+    this.gh = Math.ceil(height / this.cell) + 1;
+    this.cells = Array.from({ length: this.gw * this.gh }, () => []);
+    boxes.forEach((b, k) => {
+      for (let gx = this.index(b.minX, this.gw); gx <= this.index(b.maxX, this.gw); gx++)
+        for (let gy = this.index(b.minY, this.gh); gy <= this.index(b.maxY, this.gh); gy++) this.cells[gy * this.gw + gx]!.push(k);
     });
   }
 
-  /** Cached, canonically keyed edge on CCW line t(j) between s(i) and s(i + 1). */
-  tEdge(i: number, j: number): Edge {
-    const L = this.lattice;
-    const q = Math.floor(j / L.nCcw);
-    const ci = i + q * L.nCw;
-    const cj = j - q * L.nCcw;
-    return this.edge(`t${cj}:${ci}`, () => {
-      const value = L.t(cj);
-      const s = sampleLine(L, "t", value, (L.s(ci) + value) / 2, (L.s(ci + 1) + value) / 2, L.vertex(ci, cj), L.vertex(ci + 1, cj));
-      return { family: "t", line: cj, from: ci, value, ...s };
-    });
+  query(x: number, y: number): number[] {
+    return this.cells[this.index(y, this.gh) * this.gw + this.index(x, this.gw)]!;
   }
 
-  private edge(key: string, make: () => Edge): Edge {
-    let e = this.edges.get(key);
-    if (!e) {
-      e = make();
-      this.edges.set(key, e);
-    }
-    return e;
+  private index(v: number, max: number): number {
+    return Math.min(max - 1, Math.max(0, Math.floor(v / this.cell)));
   }
+}
 
-  /** Outline of closed cell (i, j): bottom → right → top → left vertex. */
-  cellRing(i: number, j: number): Ring {
-    const e1 = this.tEdge(i, j).points;
-    const e2 = this.sEdge(i + 1, j).points;
-    const e3 = [...this.tEdge(i, j + 1).points].reverse();
-    const e4 = [...this.sEdge(i, j).points].reverse();
-    return [...e1, ...e2.slice(1), ...e3.slice(1), ...e4.slice(1, -1)];
+function bboxOfRing(ring: Ring): BBox {
+  const b = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const [x, y] of ring) {
+    b.minX = Math.min(b.minX, x);
+    b.minY = Math.min(b.minY, y);
+    b.maxX = Math.max(b.maxX, x);
+    b.maxY = Math.max(b.maxY, y);
   }
+  return b;
+}
 
-  /** Outline of the centre region: the staircase of lower edges of the first closed cells (PLAN.md §3.3). */
-  centreRing(): Ring {
-    const L = this.lattice;
-    const ring: Pt[] = [];
-    const append = (pts: Pt[]) => {
-      for (const p of ring.length ? pts.slice(1) : pts) ring.push(p);
-    };
-    for (let i = 0; i < L.nCw; i++) {
-      const jPrev = L.jStar(i - 1);
-      const jCur = L.jStar(i);
-      for (let j = jPrev - 1; j >= jCur; j--) append([...this.sEdge(i, j).points].reverse());
-      append(this.tEdge(i, jCur).points);
-    }
-    ring.pop(); // the walk ends where it started
-    return ring;
-  }
-
-  private buildCentre(): void {
-    const pieces = this.pieces(this.centreRing());
-    const rings = pieces.flat();
-    if (rings.length === 0) return;
-    this.addRegion({ id: CENTRE_ID, rings, area: pieces.reduce((a, p) => a + polygonArea(p), 0), bbox: bboxOf(rings), cell: null });
-  }
-
-  private buildCells(): void {
-    const L = this.lattice;
-    for (let i = 0; i < L.nCw; i++) {
-      for (let j = L.jStar(i); (L.s(i) + L.t(j)) / 2 < L.uMax; j++) {
-        const pieces = this.pieces(this.cellRing(i, j))
-          .map((rings) => ({ rings, area: polygonArea(rings), bbox: bboxOf(rings) }))
-          .sort((a, b) => a.bbox.minX - b.bbox.minX || a.bbox.minY - b.bbox.minY);
-        const regions = pieces.map((p, k) => ({ id: `${i},${j}:${k}`, cell: [i, j] as [number, number], ...p }));
-        this.cellPieces.set(`${i},${j}`, regions);
-        for (const r of regions) this.addRegion(r);
-      }
-    }
-  }
-
-  /** Canvas pieces of a ring: kept whole when inside, dropped when outside, clipped otherwise. */
-  private pieces(ring: Ring): Ring[][] {
-    const b = bboxOf([ring]);
-    const { width: W, height: H } = this;
-    if (b.maxX <= 0 || b.maxY <= 0 || b.minX >= W || b.minY >= H) return [];
-    if (b.minX >= 0 && b.minY >= 0 && b.maxX <= W && b.maxY <= H) return [[ring]];
-    return clipToRect(ring, W, H).filter((p) => polygonArea(p) > MIN_PIECE_AREA);
-  }
-
-  private addRegion(r: Region): void {
-    this.regions.push(r);
-    this.byId.set(r.id, r);
-  }
+function unionBBox(boxes: BBox[]): BBox {
+  return {
+    minX: Math.min(...boxes.map((b) => b.minX)),
+    minY: Math.min(...boxes.map((b) => b.minY)),
+    maxX: Math.max(...boxes.map((b) => b.maxX)),
+    maxY: Math.max(...boxes.map((b) => b.maxY)),
+  };
 }

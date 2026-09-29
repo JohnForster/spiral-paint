@@ -1,4 +1,4 @@
-import type { Pt } from "./polygon";
+import type { Pt } from "../../src/geometry/polygon";
 import type { Edge, RegionSet } from "./regions";
 
 /** Offset (in s/t units) used to step off an edge to either side. */

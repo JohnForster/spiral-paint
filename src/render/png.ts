@@ -11,8 +11,8 @@ export async function exportPng(doc: PaintDocument, opts: ExportOptions, scale =
     img.src = url;
     await img.decode();
     const canvas = document.createElement("canvas");
-    canvas.width = Math.round(doc.config.width * scale);
-    canvas.height = Math.round(doc.config.height * scale);
+    canvas.width = Math.round(doc.scene.width * scale);
+    canvas.height = Math.round(doc.scene.height * scale);
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas 2D is not available in this browser.");
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);

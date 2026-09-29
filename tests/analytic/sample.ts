@@ -1,5 +1,5 @@
 import type { Lattice } from "./lattice";
-import type { Pt } from "./polygon";
+import type { Pt } from "../../src/geometry/polygon";
 
 /** Maximum distance (canvas px) between a sampled chord and the true spiral. */
 export const SAMPLE_EPSILON = 0.02;

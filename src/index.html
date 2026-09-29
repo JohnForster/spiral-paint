@@ -10,7 +10,8 @@
   <body>
     <header class="toolbar">
       <div class="group" role="group" aria-label="File">
-        <button data-action="new" title="New image (Ctrl/⌘+N)">New</button>
+        <button data-action="new" title="New image (N)">New</button>
+        <button data-action="edit-scene" title="Edit the spirals and lines (E) — colours are kept where possible">Scene</button>
         <button data-action="open" title="Open .spiral (Ctrl/⌘+O)">Open</button>
         <button data-action="save" title="Save .spiral (Ctrl/⌘+S)">Save</button>
         <button data-action="export-svg" title="Export SVG">SVG</button>
@@ -50,35 +51,42 @@
 
     <input type="file" id="file-input" accept=".spiral,application/json" hidden />
 
-    <dialog id="new-dialog">
-      <form method="dialog" class="new-form">
-        <h2>New image</h2>
-        <div class="new-body">
-          <div class="fields">
-            <label>Width <input name="width" type="number" min="100" max="4096" step="1" required /></label>
-            <label>Height <input name="height" type="number" min="100" max="4096" step="1" required /></label>
-            <label>Spirals <input name="spiralCount" type="number" min="2" max="12" step="1" required /></label>
-            <label>Start radius <input name="startRadius" type="number" min="0.1" step="any" required /></label>
-            <label>Growth rate <input name="growthRate" type="number" min="0.02" max="2" step="0.01" required /></label>
-            <label
-              >Centre
-              <select name="centreModel">
-                <option value="startRadius">From start radius</option>
-                <option value="origin">From the centre</option>
-              </select>
-            </label>
-            <p class="hint" id="new-hint"></p>
+    <dialog id="scene-dialog">
+      <form method="dialog" class="scene-form">
+        <h2 id="scene-title">New image</h2>
+        <div class="scene-body">
+          <div class="scene-controls">
+            <fieldset class="canvas-size">
+              <legend>Canvas</legend>
+              <label>Width <input name="width" type="number" min="100" max="4096" step="1" required /></label>
+              <label>Height <input name="height" type="number" min="100" max="4096" step="1" required /></label>
+            </fieldset>
+            <fieldset>
+              <legend>Elements</legend>
+              <div class="preset-row">
+                <select id="scene-preset" aria-label="Preset layout"></select>
+                <button type="button" id="scene-apply-preset">Use layout</button>
+              </div>
+              <ul id="scene-elements" class="element-list" role="listbox" aria-label="Elements"></ul>
+              <div class="element-buttons">
+                <button type="button" data-scene="add-spirals">+ Spirals</button>
+                <button type="button" data-scene="add-line">+ Line</button>
+                <button type="button" data-scene="duplicate">Duplicate</button>
+                <button type="button" data-scene="remove">Remove</button>
+              </div>
+            </fieldset>
+            <fieldset id="scene-element-fields" class="element-fields"></fieldset>
           </div>
           <div class="preview">
-            <svg id="new-preview" xmlns="http://www.w3.org/2000/svg"></svg>
-            <p id="new-count" class="count"></p>
+            <svg id="scene-preview" xmlns="http://www.w3.org/2000/svg"></svg>
+            <p id="scene-count" class="count"></p>
           </div>
         </div>
-        <p class="errors" id="new-errors" role="alert"></p>
-        <p class="warning" id="new-dirty" hidden>Your current image has unsaved changes. Creating a new image replaces it.</p>
+        <p class="errors" id="scene-errors" role="alert"></p>
+        <p class="warning" id="scene-note" hidden></p>
         <menu>
           <button value="cancel" formnovalidate>Cancel</button>
-          <button value="create" id="new-create" class="primary">Create</button>
+          <button value="ok" id="scene-ok" class="primary">Create</button>
         </menu>
       </form>
     </dialog>

@@ -1,6 +1,6 @@
 // The only module that knows which clipping library is in use (PLAN.md §3.4).
 import { intersection } from "polyclip-ts";
-import type { Ring } from "./polygon";
+import type { Ring } from "../../src/geometry/polygon";
 
 /**
  * Intersects a simple (possibly self-touching) ring with the rectangle

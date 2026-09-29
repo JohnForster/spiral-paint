@@ -1,22 +1,31 @@
 import type { PaintDocument } from "./document";
 
-/** One undoable step: the colour of each touched region before and after. */
-export interface Command {
-  before: Map<string, string>;
-  after: Map<string, string>;
-}
+/** One undoable step: recolouring regions, or replacing the whole document (a scene edit). */
+export type Command =
+  | { kind: "colours"; before: Map<string, string>; after: Map<string, string> }
+  | { kind: "scene"; before: PaintDocument; after: PaintDocument };
 
 /**
- * Undo/redo over a document. A step is either a single `apply` (bucket fill)
- * or everything painted between `beginStroke` and `endStroke` (a drag).
+ * Undo/redo. A colour step is a single `apply` (bucket fill) or everything
+ * painted between `beginStroke` and `endStroke` (a drag). A scene step swaps
+ * the document; documents are kept whole, so undoing a scene edit restores
+ * exactly the previous image and region ids of older steps stay valid.
  */
 export class History {
   private readonly undoStack: Command[] = [];
   private readonly redoStack: Command[] = [];
-  private stroke: Command | null = null;
+  private stroke: Extract<Command, { kind: "colours" }> | null = null;
   private readonly listeners = new Set<() => void>();
 
-  constructor(private readonly doc: PaintDocument) {}
+  /** @param onDocument called whenever undo/redo/replace switches the current document */
+  constructor(
+    private current: PaintDocument,
+    private readonly onDocument: (doc: PaintDocument) => void = () => {},
+  ) {}
+
+  get doc(): PaintDocument {
+    return this.current;
+  }
 
   get canUndo(): boolean {
     return this.undoStack.length > 0 && !this.stroke;
@@ -28,13 +37,13 @@ export class History {
 
   /** Applies a set of colour changes as one step. */
   apply(changes: ReadonlyMap<string, string>): void {
-    const cmd = this.record(changes, { before: new Map(), after: new Map() });
+    const cmd = this.record(changes, { kind: "colours", before: new Map(), after: new Map() });
     if (cmd.after.size) this.push(cmd);
   }
 
   beginStroke(): void {
     this.endStroke();
-    this.stroke = { before: new Map(), after: new Map() };
+    this.stroke = { kind: "colours", before: new Map(), after: new Map() };
   }
 
   /** Paints during a stroke (applied immediately, committed at endStroke). */
@@ -53,10 +62,18 @@ export class History {
     else this.notify();
   }
 
+  /** Switches to a new document (e.g. after a scene edit) as one undoable step. */
+  replaceDocument(next: PaintDocument): void {
+    this.endStroke();
+    this.push({ kind: "scene", before: this.current, after: next });
+    this.switchTo(next);
+  }
+
   undo(): void {
     if (!this.canUndo) return;
     const cmd = this.undoStack.pop()!;
-    this.doc.setColours(cmd.before);
+    if (cmd.kind === "colours") this.current.setColours(cmd.before);
+    else this.switchTo(cmd.before);
     this.redoStack.push(cmd);
     this.notify();
   }
@@ -64,7 +81,8 @@ export class History {
   redo(): void {
     if (!this.canRedo) return;
     const cmd = this.redoStack.pop()!;
-    this.doc.setColours(cmd.after);
+    if (cmd.kind === "colours") this.current.setColours(cmd.after);
+    else this.switchTo(cmd.after);
     this.undoStack.push(cmd);
     this.notify();
   }
@@ -74,16 +92,21 @@ export class History {
     return () => this.listeners.delete(listener);
   }
 
-  private record(changes: ReadonlyMap<string, string>, cmd: Command): Command {
+  private switchTo(doc: PaintDocument): void {
+    this.current = doc;
+    this.onDocument(doc);
+  }
+
+  private record<C extends Extract<Command, { kind: "colours" }>>(changes: ReadonlyMap<string, string>, cmd: C): C {
     const effective = new Map<string, string>();
     for (const [id, c] of changes) {
-      const current = this.doc.colourOf(id);
-      if (current === c) continue;
-      if (!cmd.before.has(id)) cmd.before.set(id, current);
+      const now = this.current.colourOf(id);
+      if (now === c) continue;
+      if (!cmd.before.has(id)) cmd.before.set(id, now);
       cmd.after.set(id, c);
       effective.set(id, c);
     }
-    this.doc.setColours(effective);
+    this.current.setColours(effective);
     return cmd;
   }
 

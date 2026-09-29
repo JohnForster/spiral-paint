@@ -1,5 +1,4 @@
 import type { Pt, Ring } from "../geometry/polygon";
-import { signedArea } from "../geometry/polygon";
 import type { Region } from "../geometry/regions";
 import type { PaintDocument } from "../model/document";
 
@@ -21,16 +20,15 @@ export function polylineToPath(line: Pt[]): string {
 const pathCache = new WeakMap<Region, string>();
 
 /**
- * Path data for a region with every outer ring oriented the same way (holes
- * opposite). Neighbouring regions share bit-identical edge points, so when
- * all regions of one colour are drawn as a single nonzero path the shared
- * edges cancel exactly and no anti-aliasing seam appears between them.
+ * Path data for a region. The arrangement gives every outer ring the same
+ * orientation (holes opposite) and neighbouring regions bit-identical edge
+ * points, so when all regions of one colour are drawn as a single nonzero path
+ * the shared edges cancel exactly and no anti-aliasing seam appears.
  */
 export function regionPathData(region: Region): string {
   let d = pathCache.get(region);
   if (d === undefined) {
-    const oriented = region.rings.map((ring, k) => ((signedArea(ring) > 0) === (k === 0) ? ring : [...ring].reverse()));
-    d = ringsToPath(oriented);
+    d = region.polygons.map(ringsToPath).join("");
     pathCache.set(region, d);
   }
   return d;
@@ -58,7 +56,7 @@ export interface ExportOptions {
  * `vector-effect`, which some rasterisers ignore.
  */
 export function exportSvg(doc: PaintDocument, { showLines }: ExportOptions, scale = 1): string {
-  const { width: W, height: H } = doc.config;
+  const { width: W, height: H } = doc.scene;
   const groups = [...colourGroups(doc)];
   const out: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${W * scale}" height="${H * scale}" viewBox="0 0 ${W} ${H}">`,
@@ -72,7 +70,7 @@ export function exportSvg(doc: PaintDocument, { showLines }: ExportOptions, scal
   ];
   if (showLines) {
     out.push(`<g clip-path="url(#canvas)" fill="none" stroke="${LINE_COLOUR}" stroke-width="${LINE_WIDTH}" stroke-linejoin="round">`);
-    for (const line of doc.regions.spiralPolylines()) out.push(`<path d="${polylineToPath(line)}"/>`);
+    for (const line of doc.regions.curves) out.push(`<path d="${polylineToPath(line)}"/>`);
     out.push("</g>");
   }
   out.push("</svg>");

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { SpiralConfig } from "../src/geometry/config";
-import { Lattice } from "../src/geometry/lattice";
-import { CENTRE_ID, RegionSet } from "../src/geometry/regions";
-import { bboxContains, distanceSqToRings, pointInRings } from "../src/geometry/polygon";
-import { rasterOracle } from "./oracle";
+import type { SpiralConfig } from "./config";
+import { Lattice } from "./lattice";
+import { CENTRE_ID, RegionSet } from "./regions";
+import { bboxContains, distanceSqToRings, pointInRings } from "../../src/geometry/polygon";
+import { rasterOracle } from "../oracle";
 
 const cfg = (c: Partial<SpiralConfig>): SpiralConfig => ({
   width: 200,
@@ -41,7 +41,7 @@ const name = (c: SpiralConfig) =>
 
 const sets = new Map(MATRIX.map((c) => [c, new RegionSet(c)]));
 
-describe.each(MATRIX)("geometry %#", (c) => {
+describe.each(MATRIX)("analytic engine %#", (c) => {
   const set = sets.get(c)!;
 
   test(`${name(c)}: region areas partition the canvas`, () => {
@@ -51,7 +51,7 @@ describe.each(MATRIX)("geometry %#", (c) => {
 
   test(`${name(c)}: raster oracle agrees`, () => {
     const ss = supersampleFor(c);
-    const res = rasterOracle(set, ss, (ss * ss) / 4);
+    const res = rasterOracle(set, { supersample: ss });
     expect(res.impure).toEqual([]);
     expect(res.pieceMismatches).toEqual([]);
     expect(res.missing).toEqual([]);

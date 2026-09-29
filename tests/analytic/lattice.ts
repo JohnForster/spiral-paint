@@ -1,6 +1,6 @@
 import type { SpiralConfig } from "./config";
 import { centreParams } from "./centreModel";
-import type { Pt } from "./polygon";
+import type { Pt } from "../../src/geometry/polygon";
 
 /**
  * The spirals in log-polar coordinates (PLAN.md §3.1).

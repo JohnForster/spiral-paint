@@ -1,50 +1,56 @@
 # Spiral Paint
 
-A paint app where users colour the regions formed by crossing logarithmic
-spirals instead of pixels. Vanilla TypeScript, SVG rendering, Bun for
-everything (no Vite, no UI framework). `PLAN.md` holds the maths and design
-rationale; read it before changing anything in `src/geometry/`.
+A paint app where users colour the regions formed by crossing curves (groups of
+logarithmic spirals around any number of centres, plus straight lines) instead
+of pixels. Vanilla TypeScript, SVG rendering, Bun for everything (no Vite, no UI
+framework). `PLAN.md` holds the design rationale (Part 1: single-centre
+analytic engine, Part 2: the current general engine); read it before changing
+anything in `src/geometry/`.
 
 ## The core idea (don't lose this)
 
-In log-polar coordinates (u = ln r, φ unwrapped) each spiral is a straight
-line: CW spirals are `s = u − bφ = const`, CCW are `t = u + bφ = const`. So the
-regions are cells of a skewed lattice with exact integer ids, plus one centre
-region. Topology is **derived analytically, never discovered numerically**:
-don't introduce pixel flood fill, generic intersection finding or DOM hit
-testing. Earlier attempts at this project failed exactly that way. Floating
-point is only used to draw cells and clip them to the canvas.
+Regions are the faces of an **exact planar arrangement of the sampled
+polylines** (`src/geometry/arrangement.ts`). Crossings are decided with exact
+`orient2d` predicates, edge order around nodes uses parent segment directions,
+and a tiny deterministic jitter removes accidental degeneracies. The polylines
+*are* the model: rendering, hit testing and adjacency all use the same faces,
+so they can't disagree. Don't introduce pixel flood fill, DOM hit testing, or
+thin-strip/offset tricks (Clipper2 was tried and rejected, see PLAN.md §11).
+Earlier attempts at this project failed on exactly this part.
 
 ## Layout
 
-- `src/geometry/`: pure, no DOM. Lattice, centre models (`startRadius` |
-  `origin`, pluggable via `centreModel.ts`), edge sampling, clipping
-  (`clip.ts` is the only file that knows about `polyclip-ts`), regions,
-  analytic `locate()`, adjacency.
-- `src/model/`: pure, no DOM. Document colours, undo history, paint and fill
-  tools, `.spiral` file format.
+- `src/geometry/`: pure, no DOM. Scene model and presets, element samplers
+  (`elements.ts`: spirals are cut near their centre, lines/segments),
+  the arrangement, regions (tiny-face merging, `locate`, adjacency, interior
+  points).
+- `src/model/`: pure, no DOM. Document colours, undo history (colour steps and
+  whole-document scene steps), paint and fill tools, `.spiral` v2 file format.
 - `src/render/`: SVG and PNG export, built from the model, not the DOM.
-- `src/ui/`: thin DOM layer (app controller, canvas view, viewport, dialog).
-- `tests/`: `bun test`, including a raster-oracle check of the geometry.
+- `src/ui/`: thin DOM layer (app controller, canvas view, viewport, scene dialog).
+- `tests/`: `bun test`. `tests/analytic/` is the Part 1 lattice engine kept
+  **only as an oracle**: single-centre scenes must match it region for region.
+  `tests/oracle.ts` is a raster flood-fill oracle usable with either engine.
 - `scripts/`: `e2e.ts` (headless Chrome via Playwright) and `render.ts`
   (headless PNGs via resvg) for visual checks.
 
 ## Invariants worth protecting
 
-- Neighbouring cells must share **bit-identical** edge points (edges are cached
-  under canonical keys). Seamless rendering depends on this: all regions of one
-  colour are drawn as a single path so shared edges cancel.
-- Region ids (`"c"` for the centre, `"i,j:piece"` for cells) are only meaningful
-  together with the config, which is always saved alongside them.
-- Geometry changes must keep the area-partition, raster-oracle and adjacency
-  tests green across the whole config matrix.
+- Neighbouring faces share **bit-identical** edge points and outer rings share
+  one orientation. Seamless rendering depends on this: all regions of one colour
+  are drawn as a single nonzero path so shared edges cancel.
+- Region ids (`r0`, `r1`, …) are runtime-only. Files and scene edits carry
+  colours by an interior point per region, never by id.
+- Geometry changes must keep green: area partition, the brute-force crossing
+  sweep, the raster oracle, and the analytic-engine match.
 
 ## Verifying changes
 
 `bun test`, `bun run typecheck`, `bun run e2e` for anything touching
-interaction, and `bun run render` then look at the PNGs for visual changes.
-Claude in Chrome is unavailable on this machine; headless Chrome through
-Playwright (`channel: "chrome"`) works.
+interaction, and `bun run render` then look at the PNGs for visual changes
+(the `*-flat.png` renders must be a single colour). Claude in Chrome is
+unavailable on this machine; headless Chrome through Playwright
+(`channel: "chrome"`) works.
 
 ## Bun
 

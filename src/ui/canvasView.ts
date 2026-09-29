@@ -32,7 +32,7 @@ export class CanvasView {
     svg: SVGSVGElement,
     private readonly doc: PaintDocument,
   ) {
-    const { width: W, height: H } = doc.config;
+    const { width: W, height: H } = doc.scene;
     this.root = el("g");
     const clipId = "canvas-clip";
     const defs = el("defs");
@@ -43,7 +43,7 @@ export class CanvasView {
     this.underlayLayer = el("g", { "clip-path": `url(#${clipId})`, fill: "none", class: "underlay" });
     this.fillLayer = el("g", { "fill-rule": "nonzero" });
     this.linesLayer = el("g", { "clip-path": `url(#${clipId})`, fill: "none", stroke: LINE_COLOUR, class: "spiral-lines" });
-    for (const line of doc.regions.spiralPolylines()) this.linesLayer.append(el("path", { d: polylineToPath(line) }));
+    for (const line of doc.regions.curves) this.linesLayer.append(el("path", { d: polylineToPath(line) }));
     this.hover = el("path", { class: "hover-outline" });
     this.root.append(defs, shadow, this.underlayLayer, this.fillLayer, this.linesLayer, this.hover);
     svg.replaceChildren(this.root);

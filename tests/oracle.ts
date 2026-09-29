@@ -1,6 +1,15 @@
 // Independent check of the region model: rasterise the spirals, flood-fill the
 // pixels (4-connected) and see which analytic region each pixel lands in.
-import type { RegionSet } from "../src/geometry/regions";
+import type { Pt } from "../src/geometry/polygon";
+
+/** Anything with regions that can be located: the analytic engine or the arrangement engine. */
+export interface Locatable {
+  width: number;
+  height: number;
+  curves: Pt[][];
+  regions: { id: string; area: number }[];
+  locate(x: number, y: number): { id: string } | null;
+}
 
 export interface OracleResult {
   /** Raster components whose pixels map to more than one region. */
@@ -12,7 +21,21 @@ export interface OracleResult {
   components: number;
 }
 
-export function rasterOracle(set: RegionSet, supersample = 4, minComponent = 4): OracleResult {
+export interface OracleOptions {
+  supersample?: number;
+  /** Raster components smaller than this many sub-pixels are ignored when counting pieces. */
+  minComponent?: number;
+  /** Regions for which the raster must find exactly one component. */
+  checkPieces?: (id: string) => boolean;
+  /** Regions the raster must find at all (default: area > 4 raster pixels). */
+  mustAppear?: (id: string, area: number) => boolean;
+}
+
+export function rasterOracle(set: Locatable, opts: OracleOptions = {}): OracleResult {
+  const supersample = opts.supersample ?? 4;
+  const minComponent = opts.minComponent ?? (supersample * supersample) / 4;
+  const checkPieces = opts.checkPieces ?? (() => true);
+  const mustAppear = opts.mustAppear ?? ((_: string, area: number) => area > (minComponent * 4) / (supersample * supersample));
   const W = set.width * supersample;
   const H = set.height * supersample;
   const wall = new Uint8Array(W * H);
@@ -26,7 +49,7 @@ export function rasterOracle(set: RegionSet, supersample = 4, minComponent = 4):
         if (X >= 0 && Y >= 0 && X < W && Y < H) wall[Y * W + X] = 1;
       }
   };
-  for (const line of set.spiralPolylines())
+  for (const line of set.curves)
     for (let m = 1; m < line.length; m++) {
       const [x1, y1] = line[m - 1]!;
       const [x2, y2] = line[m]!;
@@ -65,9 +88,8 @@ export function rasterOracle(set: RegionSet, supersample = 4, minComponent = 4):
     }
   }
   const pieceMismatches = [...componentsPerId]
-    .filter(([, n]) => n !== 1)
+    .filter(([id, n]) => n !== 1 && checkPieces(id))
     .map(([id, raster]) => ({ id, raster }));
-  const bigEnough = (minComponent * 4) / (supersample * supersample);
-  const missing = set.regions.filter((r) => r.area > bigEnough && !componentsPerId.has(r.id)).map((r) => r.id);
+  const missing = set.regions.filter((r) => mustAppear(r.id, r.area) && !componentsPerId.has(r.id)).map((r) => r.id);
   return { impure, pieceMismatches, missing, components };
 }

@@ -1,6 +1,6 @@
-import { DEFAULT_CONFIG } from "../geometry/config";
 import type { Pt } from "../geometry/polygon";
-import { CENTRE_ID, type Region } from "../geometry/regions";
+import type { Region } from "../geometry/regions";
+import { DEFAULT_SCENE, type Scene } from "../geometry/scene";
 import { normaliseColour } from "../model/colour";
 import { PaintDocument } from "../model/document";
 import { FILE_EXTENSION, parse, serialise, SpiralFileError } from "../model/fileFormat";
@@ -10,7 +10,7 @@ import { exportPng } from "../render/png";
 import { exportSvg } from "../render/svg";
 import { CanvasView } from "./canvasView";
 import { download, pickTextFile } from "./files";
-import { openNewImageDialog } from "./newImageDialog";
+import { openSceneDialog } from "./sceneDialog";
 import { AUTOSAVE_KEY, load, loadPrefs, PREFS_KEY, store, type Prefs } from "./storage";
 import { Viewport } from "./viewport";
 
@@ -33,7 +33,6 @@ interface Autosave {
 }
 
 export class App {
-  private doc!: PaintDocument;
   private history!: History;
   private view: CanvasView | null = null;
   private readonly viewport: Viewport;
@@ -46,10 +45,11 @@ export class App {
   private autosaveTimer = 0;
   private drag: { kind: "paint" | "pan"; pointerId: number; last: Pt; lastClient: Pt } | null = null;
   private unsubscribeDoc: (() => void) | null = null;
+  private viewportSize: [number, number] = [0, 0];
 
   constructor() {
     this.prefs = loadPrefs({ colour: "#e63946", recent: [], showLines: true });
-    this.viewport = new Viewport(this.svg, DEFAULT_CONFIG.width, DEFAULT_CONFIG.height);
+    this.viewport = new Viewport(this.svg, DEFAULT_SCENE.width, DEFAULT_SCENE.height);
     this.viewport.onChange(() => this.updateZoomLabel());
     this.bindToolbar();
     this.bindCanvas();
@@ -58,29 +58,45 @@ export class App {
     this.setColour(this.prefs.colour);
     this.setTool("paint");
 
-    if (!this.restoreAutosave()) this.loadDocument(new PaintDocument(DEFAULT_CONFIG), "untitled", false);
+    if (!this.restoreAutosave()) this.loadDocument(new PaintDocument(DEFAULT_SCENE), "untitled", false);
+  }
+
+  private get doc(): PaintDocument {
+    return this.history.doc;
   }
 
   // ---- documents -------------------------------------------------------
 
+  /** Starts a fresh history on a document (new image, open, restore). */
   private loadDocument(doc: PaintDocument, name: string, dirty: boolean): void {
+    this.history = new History(doc, (d) => {
+      this.showDocument(d);
+      this.dirty = true;
+      this.scheduleAutosave();
+    });
+    this.history.onChange(() => this.updateButtons());
+    this.fileName = name;
+    this.showDocument(doc);
+    this.dirty = dirty;
+    this.updateButtons();
+    this.scheduleAutosave();
+  }
+
+  /** Puts a document on screen (also used when undo/redo crosses a scene edit). */
+  private showDocument(doc: PaintDocument): void {
     this.view?.destroy();
     this.unsubscribeDoc?.();
-    this.doc = doc;
-    this.history = new History(doc);
-    this.history.onChange(() => this.updateButtons());
     this.unsubscribeDoc = doc.onChange(() => {
       this.dirty = true;
       this.scheduleAutosave();
     });
-    this.fileName = name;
-    this.dirty = dirty;
+    const previous = this.view ? this.viewportSize : null;
     this.view = new CanvasView(this.svg, doc);
     this.view.setLinesVisible(this.prefs.showLines);
-    this.viewport.setCanvasSize(doc.config.width, doc.config.height);
-    this.updateButtons();
+    this.viewportSize = [doc.scene.width, doc.scene.height];
+    if (!previous || previous[0] !== doc.scene.width || previous[1] !== doc.scene.height)
+      this.viewport.setCanvasSize(doc.scene.width, doc.scene.height);
     this.updateInfo();
-    this.scheduleAutosave();
   }
 
   private restoreAutosave(): boolean {
@@ -89,7 +105,8 @@ export class App {
     try {
       const saved = JSON.parse(raw) as Autosave;
       const parsed = parse(saved.data);
-      this.loadDocument(new PaintDocument(parsed.config, parsed.colours), saved.name || "untitled", !!saved.dirty);
+      const { doc } = PaintDocument.fromColourPoints(parsed.scene, parsed.colours);
+      this.loadDocument(doc, saved.name || "untitled", !!saved.dirty);
       return true;
     } catch {
       return false;
@@ -105,10 +122,20 @@ export class App {
   }
 
   private async newImage(): Promise<void> {
-    const config = await openNewImageDialog(this.doc.config, this.dirty);
-    if (!config) return;
-    this.loadDocument(new PaintDocument(config), "untitled", false);
+    const note = this.dirty ? "Your current image has unsaved changes. Creating a new image replaces it." : null;
+    const scene = await openSceneDialog("new", this.doc.scene, note);
+    if (!scene) return;
+    this.loadDocument(new PaintDocument(scene), "untitled", false);
     this.message("New image created.");
+  }
+
+  /** Edits the current scene; colours carry over by interior point, and the edit is undoable. */
+  private async editScene(): Promise<void> {
+    const scene: Scene | null = await openSceneDialog("edit", this.doc.scene, "Colours are carried over to the new regions where possible. You can undo the edit.");
+    if (!scene) return;
+    const { doc } = PaintDocument.fromColourPoints(scene, this.doc.colourPoints());
+    this.history.replaceDocument(doc);
+    this.message("Scene updated.");
   }
 
   private async open(): Promise<void> {
@@ -117,11 +144,11 @@ export class App {
     if (!file) return;
     try {
       const parsed = parse(file.text);
-      const doc = new PaintDocument(parsed.config, parsed.colours);
+      const { doc, unplaced } = PaintDocument.fromColourPoints(parsed.scene, parsed.colours);
       this.loadDocument(doc, file.name.replace(/\.spiral$/i, ""), false);
       this.message(
-        doc.ignoredColours
-          ? `Opened ${file.name}. ${doc.ignoredColours} colour entries didn't match any region and were skipped.`
+        unplaced
+          ? `Opened ${file.name}. ${unplaced} colours were outside the canvas and were skipped.`
           : `Opened ${file.name}.`,
       );
     } catch (e) {
@@ -271,16 +298,13 @@ export class App {
 
   private hoverAt(region: Region | null): void {
     this.view?.setHover(region);
-    document.getElementById("status-region")!.textContent = region
-      ? region.id === CENTRE_ID
-        ? "Centre region"
-        : `Region ${region.id}`
-      : "";
+    document.getElementById("status-region")!.textContent = region ? `Region ${region.id.slice(1)}` : "";
   }
 
   private bindToolbar(): void {
     const actions: Record<string, () => void> = {
       new: () => void this.newImage(),
+      "edit-scene": () => void this.editScene(),
       open: () => void this.open(),
       save: () => this.save(),
       "export-svg": () => this.exportSvgFile(),
@@ -328,6 +352,7 @@ export class App {
         case "i": return run(() => this.setTool("pick"));
         case "l": return run(() => this.toggleLines());
         case "n": return run(() => void this.newImage());
+        case "e": return run(() => void this.editScene());
         case "0": return run(() => this.viewport.fit());
         case "+":
         case "=": return run(() => this.viewport.zoomAt(1.25));
@@ -372,9 +397,10 @@ export class App {
   }
 
   private updateInfo(): void {
-    const c = this.doc.config;
+    const s = this.doc.scene;
+    const n = s.elements.length;
     document.getElementById("status-info")!.textContent =
-      `${c.width}×${c.height} · ${c.spiralCount} spirals · ${this.doc.regions.regions.length.toLocaleString()} regions`;
+      `${s.width}×${s.height} · ${n} element${n === 1 ? "" : "s"} · ${this.doc.regions.regions.length.toLocaleString()} regions`;
   }
 
   private message(text: string, isError = false): void {

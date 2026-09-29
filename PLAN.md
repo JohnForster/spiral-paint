@@ -1,6 +1,6 @@
 # Spiral Paint — Implementation Plan
 
-Status: **implemented** — all phases done. See §9 for where the build deviated from this plan and why.
+Status: **Part 2 implemented** (multiple centres, lines, spirals to the centre). Part 1's engine now lives in `tests/analytic/` as an oracle. See §9 and §14 for deviations.
 Spike code: `spike/` (throwaway, but the maths in it is what this plan formalises).
 
 ---
@@ -305,3 +305,71 @@ Open items deliberately deferred: editing config after creation (colours can't m
 | Interactive checks via a handoff to another machine. | `scripts/e2e.ts` drives the real app in **headless Google Chrome via Playwright** (no extension/login needed): click, fast drag, undo/redo, eyedropper, lines, wheel zoom anchoring, shift/middle pan, save/open, SVG/PNG/2× export, autosave reload, bucket fill, New dialog validation, max-zoom clicks on a 1.7 px² centre cell and a 1 px² edge sliver. | Headless Chrome works on this machine even though Claude in Chrome doesn't. |
 
 Not verified automatically: real trackpad pinch-zoom feel, Safari/Firefox, and very long painting sessions.
+
+---
+
+# Part 2 — Multiple centres, straight lines, spirals to the centre
+
+## 10. Decisions (grilling round, all defaults accepted)
+
+| # | Decision |
+|---|----------|
+| Elements | **Spiral groups** (centre, count, growth, rotation, direction pattern alternate/cw/ccw — all per group) and **lines** (infinite or segment). Sampler-per-type so circles etc. can follow. |
+| Placement | New/Edit Scene dialog: element list + numeric fields + presets (single, 2×2 square, row of 3, …) + live preview. Drag-to-place later. |
+| Editing | Scene is editable after painting. Colours carry over best-effort via each old region's interior point; the edit is one undo step. |
+| Centres | Start-radius model removed. Spirals run into the centre; each group is cut at a radius where its arms are ~1.5 px apart, and the (tiny) area inside is merged into one centre region. Centres may be off-canvas. |
+| Tiny regions | Regions < 1 px² are merged into the neighbour sharing the longest border. |
+| Files | `.spiral` v2; v1 files are rejected with a clear message. |
+
+## 11. Why the Part 1 engine can't be extended, and what replaces it
+
+The lattice trick needs one shared centre. With several centres (or lines), curves
+aren't straight in any common coordinate system, so the topology can't be written
+down; it must be computed. That is the approach that sank earlier attempts, so the
+design is driven by robustness.
+
+**Rejected: thin-strip subtraction with Clipper2** (canvas minus very thin strips around every curve). Spiked: the JS port took 2.7 s (2×2 scene) to 6.5 s, and returned wrong offset areas and a failed polytree on a trivial case. Too slow and untrustworthy.
+
+**Chosen: an exact planar arrangement of the sampled polylines** (`src/geometry/arrangement.ts`).
+
+The *model* is the arrangement of the ε-accurate polylines (not of the ideal curves). Everything — rendering, hit testing, adjacency — uses that same model, so it's self-consistent by construction.
+
+1. **Sample** each element to polylines (ε = 0.02 px). Spiral groups: r from r_cut to past the farthest canvas corner.
+2. **Jitter** every input vertex by a deterministic ~1e-7 px. This removes accidental exact degeneracies (duplicate lines, a line exactly on the canvas edge, three curves through one point) with probability 1; what they'd produce instead is sub-pixel slivers, which step 8 merges.
+3. **Clip** polylines to the canvas. Entry/exit points are snapped exactly onto the border and given a perimeter coordinate. This is the one *intended* degeneracy, and it's handled by construction, never by predicate.
+4. **Find crossings** between segments of different pieces with a uniform grid, decided by **exact `orient2d`** (`robust-predicates`): proper crossing ⇔ strict sign changes both ways. The crossing's position (float) is only used for drawing.
+5. **Build a half-edge graph**: nodes are crossings, dangling ends (spiral starts, segment ends), border points and canvas corners; each edge carries its polyline. Outgoing edges are sorted by angle at each node using the **parent segment's direction**, not the approximate crossing coordinates. Dangling ends make slits (the edge's two sides belong to the same face) — exactly the "slit doesn't split a region" rule.
+6. **Trace faces** (`next` = next clockwise from twin). Positive cycles are faces; the cycle outside the canvas is dropped; negative cycles of components that don't touch the border (a floating segment) become holes of the smallest face containing them.
+7. **Adjacency** comes from twin half-edges (shared border length is summed per pair). No probing; corner contact is never adjacency.
+8. **Merge tiny faces** (< 1 px²) into the neighbour with the longest shared border, smallest first (union-find).
+9. **Locate** by a uniform grid over face bounding boxes + point-in-polygon; a point exactly on an edge falls back to the nearest face.
+
+Neighbouring faces share the same node and edge-polyline coordinates, so the seamless "one path per colour" rendering from Part 1 keeps working.
+
+### Spiral cutoff radius
+Arms of the same direction are `Δφ = 2π / (number of arms in that direction)` apart; at radius r they're `r·b·Δφ/√(1+b²)` px apart. `r_cut = 1.5·√(1+b²)/(b·Δφ)` — the same formula as Part 1's origin model, so the analytic engine is a valid oracle for single-group scenes.
+
+## 12. Verification
+
+* **Analytic oracle**: the Part 1 lattice engine moves to `tests/` and stays as an oracle. For single-group scenes (a = 1, origin model) every analytic region must correspond to exactly one face with matching area, and adjacency must match.
+* **Raster oracle** (generalised to any scene): 0 impure components, piece counts agree.
+* **Structural invariants**: every half-edge in exactly one cycle, twins symmetric, Σ face areas = W·H, adjacency symmetric.
+* **Degenerate scenes**: duplicate elements, line along the canvas edge, line through a spiral centre, floating segment (hole), centre off-canvas, centre on a corner, two groups on the same centre, parallel lines.
+* **e2e** updated for the scene editor and scene edits with colour carry-over.
+* **Performance budget**: typical 2×2 scene rebuild < 300 ms; move to a Worker if exceeded.
+
+## 13. Model and file changes
+
+* `Scene { width, height, elements[] }` replaces `SpiralConfig`.
+* Region ids are runtime-only (`r0…`, deterministic order). Files store colours as `{x, y, colour}` at an interior point of each painted region (pole of inaccessibility), so saved images survive engine changes; loading = `locate` each point.
+* Scene edits: History gains a "scene" command holding the before/after documents; colours are re-attached by interior point.
+
+## 14. Part 2 implementation notes
+
+| Finding | Resolution |
+|---------|------------|
+| Performance: 2×2 preset (1 351 regions) builds in ~28 ms, dense 2×2 (12 arms, b = 0.15; 6 605 regions) in ~73 ms. | No Worker needed; the scene dialog rebuilds live on every edit. |
+| The cutoff formula assumed arms of one direction are evenly spaced; with odd alternating counts they aren't (n = 7: gaps of 4π/7 and 2π/7). Caught by the analytic-oracle match. | Use the smallest actual angular gap within a direction. |
+| Raster oracle at 4× misses slivers < ~0.65 px thick and pinches narrow necks; even 40× pinched a region with a genuine 0.097 px neck (a far spiral passing near without crossing). | Per-scene raster check asserts impurity + visible regions only; a 16× exact check runs on one multi-centre scene with neck-aware piece checks; and a **brute-force crossing sweep** (no grid, no robust predicates) must find exactly the engine's crossings in every scene — the direct check that no crossing is ever missed. |
+| `<dialog>` fires `close` asynchronously; reopening immediately after Cancel let the stale event tear down the new session (buttons went dead). Found by e2e. | The close handler ignores events while the dialog is open again. |
+| Duplicate elements, a line on the canvas edge, lines through centres, near-parallel lines, centres off-canvas or on a corner. | All produce zero degenerate predicate cases thanks to the jitter; slivers are merged. Covered in the test matrix. |

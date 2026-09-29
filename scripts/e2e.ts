@@ -2,9 +2,9 @@
 // Usage: bun scripts/e2e.ts [screenshotDir]
 import { chromium, type Page } from "playwright";
 import index from "../src/index.html";
-import { DEFAULT_CONFIG, type SpiralConfig } from "../src/geometry/config";
 import type { Pt } from "../src/geometry/polygon";
-import { CENTRE_ID, RegionSet } from "../src/geometry/regions";
+import { RegionSet } from "../src/geometry/regions";
+import { DEFAULT_SCENE, line, PRESETS, spiralGroup, type Scene } from "../src/geometry/scene";
 import { regionsAlongSegment } from "../src/model/tools";
 import { regionPathData } from "../src/render/svg";
 
@@ -95,7 +95,8 @@ const pngSize = async (path: string) => {
 };
 
 try {
-  const set = new RegionSet(DEFAULT_CONFIG);
+  const set = new RegionSet(DEFAULT_SCENE);
+  const CENTRE_ID = set.locate(DEFAULT_SCENE.width / 2, DEFAULT_SCENE.height / 2)!.id;
   await fresh();
   await page.screenshot({ path: `${shotDir}/01-initial.png` });
   check("status shows region count", (await page.textContent("#status-info"))!.includes(`${set.regions.length} regions`));
@@ -104,7 +105,7 @@ try {
   const a: Pt = [150, 420];
   const b: Pt = [1050, 380];
   const expected = regionsAlongSegment(set, a, b, 0.05);
-  const cellId = set.regions.find((r) => r.cell && r.area > 2000 && !expected.includes(r.id))!.id;
+  const cellId = set.regions.find((r) => r.id !== CENTRE_ID && r.area > 2000 && !expected.includes(r.id))!.id;
   await setColour("#ed1c24");
   let [cx, cy] = await toClient(interiorPoint(set, cellId));
   await page.mouse.click(cx, cy);
@@ -186,14 +187,16 @@ try {
   const saved = await download(() => page.keyboard.press("ControlOrMeta+s"));
   const savedJson = JSON.parse(await Bun.file(saved.path).text());
   check("save downloads a .spiral file", saved.name === "untitled.spiral" && savedJson.format === "spiral-paint");
-  check("saved file has the painted colours", savedJson.colours[cellId] === "#ed1c24" && savedJson.colours[expected[0]!] === "#00a2e8");
+  const savedAt = (id: string) =>
+    (savedJson.colours as { x: number; y: number; colour: string }[]).find((c) => set.locate(c.x, c.y)?.id === id)?.colour;
+  check("saved file has the painted colours (as points)", savedJson.version === 2 && savedAt(cellId) === "#ed1c24" && savedAt(expected[0]!) === "#00a2e8");
   const svgFile = await download(() => page.click('[data-action="export-svg"]'));
   const svgText = await Bun.file(svgFile.path).text();
   check("SVG export", svgFile.name === "untitled.svg" && svgText.startsWith("<svg") && svgText.includes('fill="#ed1c24"'));
   const png1 = await download(() => page.click('[data-action="export-png"]'));
-  check("PNG export is canvas-sized", JSON.stringify(await pngSize(png1.path)) === JSON.stringify([DEFAULT_CONFIG.width, DEFAULT_CONFIG.height]));
+  check("PNG export is canvas-sized", JSON.stringify(await pngSize(png1.path)) === JSON.stringify([DEFAULT_SCENE.width, DEFAULT_SCENE.height]));
   const png2 = await download(() => page.click('[data-action="export-png-2x"]'));
-  check("PNG 2× export is double size", JSON.stringify(await pngSize(png2.path)) === JSON.stringify([DEFAULT_CONFIG.width * 2, DEFAULT_CONFIG.height * 2]));
+  check("PNG 2× export is double size", JSON.stringify(await pngSize(png2.path)) === JSON.stringify([DEFAULT_SCENE.width * 2, DEFAULT_SCENE.height * 2]));
   await Bun.write(`${shotDir}/export.png`, Bun.file(png1.path));
 
   // Autosave survives reload
@@ -232,45 +235,91 @@ try {
   await frame();
   check("open restores a saved file", (await shownColour(set, cellId)) === "#ed1c24" && (await shownColour(set, expected[0]!)) === "#00a2e8");
 
-  // New image dialog: live count, then create with 5 spirals in the origin model.
+  // New image dialog: 2×2 preset, live count, validation, create.
+  const { width: W, height: H } = DEFAULT_SCENE;
+  const grid: Scene = { width: W, height: H, elements: PRESETS[1]!.make(W, H) };
+  const gridSet = new RegionSet(grid);
   await page.keyboard.press("n");
-  await page.waitForSelector("#new-dialog[open]");
-  await page.fill('input[name="spiralCount"]', "5");
-  await page.selectOption('select[name="centreModel"]', "origin");
-  const cfg5: SpiralConfig = { ...DEFAULT_CONFIG, spiralCount: 5, centreModel: "origin" };
-  const n5 = new RegionSet(cfg5).regions.length;
-  await page.waitForFunction((n) => document.getElementById("new-count")!.textContent === `${n.toLocaleString()} regions`, n5);
-  check("dialog preview shows the region count", true, `${n5} regions`);
+  await page.waitForSelector("#scene-dialog[open]");
+  await page.selectOption("#scene-preset", "1");
+  await page.click("#scene-apply-preset");
+  const countText = (n: number) => `${n.toLocaleString()} regions`;
+  await page.waitForFunction((t) => document.getElementById("scene-count")!.textContent!.startsWith(t), countText(gridSet.regions.length));
+  check("dialog preview shows the region count for the 2×2 preset", true, countText(gridSet.regions.length));
   await page.screenshot({ path: `${shotDir}/05-new-dialog.png` });
-  await page.fill('input[name="growthRate"]', "5");
-  await page.waitForFunction(() => (document.getElementById("new-create") as HTMLButtonElement).disabled);
-  check("invalid settings disable Create", true, (await page.textContent("#new-errors"))!);
-  await page.fill('input[name="growthRate"]', "0.25");
-  await page.waitForFunction(() => !(document.getElementById("new-create") as HTMLButtonElement).disabled);
-  await page.click("#new-create");
+  await page.fill('input[name="el-growth"]', "5");
+  await page.waitForFunction(() => (document.getElementById("scene-ok") as HTMLButtonElement).disabled);
+  check("invalid settings disable Create", true, (await page.textContent("#scene-errors"))!);
+  await page.fill('input[name="el-growth"]', "0.25");
+  await page.waitForFunction(() => !(document.getElementById("scene-ok") as HTMLButtonElement).disabled);
+  await page.click("#scene-ok");
   await frame();
-  check("new image uses the dialog settings", (await page.textContent("#status-info"))!.includes(`5 spirals · ${n5} regions`));
+  check("new image uses the 2×2 layout", (await page.textContent("#status-info"))!.includes(`4 elements · ${countText(gridSet.regions.length)}`));
   await page.screenshot({ path: `${shotDir}/06-new-image.png` });
 
-  // Deep zoom on a dense image: click a tiny cell near the centre at maximum zoom.
-  const dense: SpiralConfig = { ...DEFAULT_CONFIG, spiralCount: 12, startRadius: 4, growthRate: 0.15 };
+  // Paint a big region, then edit the scene: add a line. The colour should carry over, and the edit undo.
+  const big = [...gridSet.regions].sort((p, q) => q.area - p.area)[3]!;
+  const bigPt = interiorPoint(gridSet, big.id);
+  await page.keyboard.press("p");
+  await setColour("#a349a4");
+  [cx, cy] = await toClient(bigPt);
+  await page.mouse.click(cx, cy);
+  await frame();
+  await page.keyboard.press("e");
+  await page.waitForSelector("#scene-dialog[open]");
+  check("edit dialog opens on the current scene", (await page.$$eval("#scene-elements li", (l) => l.length)) === 4);
+  await page.click('[data-scene="add-line"]');
+  await page.fill('input[name="el-y1"]', "123");
+  await page.fill('input[name="el-y2"]', "456");
+  const edited: Scene = { ...grid, elements: [...grid.elements, line(0, 123, W, 456)] };
+  const editedSet = new RegionSet(edited);
+  await page.waitForFunction((t) => document.getElementById("scene-count")!.textContent!.startsWith(t), countText(editedSet.regions.length));
+  await page.screenshot({ path: `${shotDir}/08-edit-dialog.png` });
+  await page.click("#scene-ok");
+  await frame();
+  check("scene edit applies", (await page.textContent("#status-info"))!.includes(`5 elements · ${countText(editedSet.regions.length)}`));
+  const carried = editedSet.locate(...bigPt)!.id;
+  check("painted colour carries over to the edited scene", (await shownColour(editedSet, carried)) === "#a349a4");
+  await page.screenshot({ path: `${shotDir}/09-edited.png` });
+  await page.keyboard.press("ControlOrMeta+z");
+  await frame();
+  check("undo reverts the scene edit", (await page.textContent("#status-info"))!.includes(`4 elements · ${countText(gridSet.regions.length)}`));
+  check("undoing the scene edit keeps the colour", (await shownColour(gridSet, big.id)) === "#a349a4");
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await frame();
+  check("redo reapplies the scene edit", (await page.textContent("#status-info"))!.includes("5 elements"));
+
+  // Clicking the preview moves the selected spiral centre.
+  await page.keyboard.press("e");
+  await page.waitForSelector("#scene-dialog[open]");
+  await page.click("#scene-elements li >> nth=0");
+  const box = (await page.locator("#scene-preview").boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const movedX = Number(await page.inputValue('input[name="el-x"]'));
+  check("clicking the preview moves the selected centre", Math.abs(movedX - W / 2) < W * 0.02, `x=${movedX}`);
+  await page.click('#scene-dialog button[value="cancel"]');
+  check("cancelling an edit changes nothing", (await page.textContent("#status-info"))!.includes("5 elements"));
+
+  // Deep zoom on a dense single-centre image.
+  const dense: Scene = { width: W, height: H, elements: [spiralGroup(W / 2, H / 2, { count: 12, growth: 0.15 })] };
   const denseSet = new RegionSet(dense);
   await page.keyboard.press("n");
-  await page.waitForSelector("#new-dialog[open]");
-  await page.fill('input[name="spiralCount"]', "12");
-  await page.fill('input[name="startRadius"]', "4");
-  await page.fill('input[name="growthRate"]', "0.15");
-  await page.selectOption('select[name="centreModel"]', "startRadius");
-  await page.waitForFunction((n) => document.getElementById("new-count")!.textContent === `${n.toLocaleString()} regions`, denseSet.regions.length);
-  await page.click("#new-create");
+  await page.waitForSelector("#scene-dialog[open]");
+  await page.selectOption("#scene-preset", "0");
+  await page.click("#scene-apply-preset");
+  await page.fill('input[name="el-count"]', "12");
+  await page.fill('input[name="el-growth"]', "0.15");
+  await page.waitForFunction((t) => document.getElementById("scene-count")!.textContent!.startsWith(t), countText(denseSet.regions.length), { timeout: 5000 }).catch(async () => {
+    throw new Error(`dense dialog shows "${await page.textContent("#scene-count")}" / "${await page.textContent("#scene-errors")}", expected ${countText(denseSet.regions.length)}; elements ${await page.$$eval("#scene-elements li", (l) => l.map((x) => x.textContent))}`);
+  });
+  await page.click("#scene-ok");
   await frame();
-  // Two targets: the cell nearest the centre, and the smallest sliver clipped by the canvas edge.
-  const L = denseSet.lattice;
-  const dist = (r: { bbox: { minX: number; minY: number; maxX: number; maxY: number } }) =>
-    Math.hypot((r.bbox.minX + r.bbox.maxX) / 2 - L.cx, (r.bbox.minY + r.bbox.maxY) / 2 - L.cy);
-  const innermost = denseSet.regions.filter((r) => r.cell).sort((p, q) => dist(p) - dist(q))[0]!;
-  const sliver = denseSet.regions.filter((r) => r.cell && r.area > 0.5 && r.area < 3).sort((p, q) => p.area - q.area)[0]!;
-  await page.keyboard.press("p");
+  // Two targets: the smallest region next to the centre, and the smallest sliver clipped by the canvas edge.
+  const denseCentre = denseSet.locate(W / 2, H / 2)!.id;
+  const innermost = [...denseSet.neighbours(denseCentre)].map((id) => denseSet.byId.get(id)!).sort((p, q) => p.area - q.area)[0]!;
+  const onEdge = (r: { bbox: { minX: number; minY: number; maxX: number; maxY: number } }) =>
+    r.bbox.minX <= 0 || r.bbox.minY <= 0 || r.bbox.maxX >= W || r.bbox.maxY >= H;
+  const sliver = denseSet.regions.filter(onEdge).sort((p, q) => p.area - q.area)[0]!;
   await setColour("#ff7f27");
   for (const [label, target] of [["innermost", innermost], ["edge sliver", sliver]] as const) {
     await page.keyboard.press("0");
@@ -285,7 +334,7 @@ try {
     await page.mouse.click(tx, ty);
     await frame();
     check(
-      `max zoom click paints the ${label} cell (${target.area.toFixed(2)} px², ${dist(target).toFixed(1)} px from centre)`,
+      `max zoom click paints the ${label} region (${target.area.toFixed(2)} px²)`,
       (await shownColour(denseSet, target.id)) === "#ff7f27",
       `zoom ${await page.textContent("#zoom")}`,
     );
@@ -295,7 +344,7 @@ try {
   check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
 } catch (e) {
   failures++;
-  console.log("FAIL  script error —", e);
+  console.log("FAIL  script error —", e, "\nconsole errors:", consoleErrors);
   await page.screenshot({ path: `${shotDir}/error.png` }).catch(() => {});
 } finally {
   await browser.close();
