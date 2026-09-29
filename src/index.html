@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spiral Paint</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%232f6fde'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="group" role="group" aria-label="File">
+        <button data-action="new" title="New image (Ctrl/⌘+N)">New</button>
+        <button data-action="open" title="Open .spiral (Ctrl/⌘+O)">Open</button>
+        <button data-action="save" title="Save .spiral (Ctrl/⌘+S)">Save</button>
+        <button data-action="export-svg" title="Export SVG">SVG</button>
+        <button data-action="export-png" title="Export PNG (Ctrl/⌘+E)">PNG</button>
+        <button data-action="export-png-2x" title="Export PNG at 2× resolution">PNG 2×</button>
+      </div>
+      <div class="group" role="group" aria-label="Tools">
+        <button data-tool="paint" title="Paint (P) — click or drag">Paint</button>
+        <button data-tool="fill" title="Fill (B / F) — flood fill connected regions of the same colour">Fill</button>
+        <button data-tool="pick" title="Eyedropper (I) — or Alt+click">Pick</button>
+      </div>
+      <div class="group colours" role="group" aria-label="Colour">
+        <input type="color" id="colour" value="#e63946" title="Current colour" />
+        <div class="swatches" id="swatches"></div>
+        <div class="swatches recent" id="recent" title="Recent colours"></div>
+      </div>
+      <div class="group" role="group" aria-label="Edit and view">
+        <button data-action="undo" title="Undo (Ctrl/⌘+Z)">Undo</button>
+        <button data-action="redo" title="Redo (Ctrl/⌘+Shift+Z / Ctrl+Y)">Redo</button>
+        <button data-action="lines" title="Toggle spiral lines (L)" aria-pressed="true">Lines</button>
+        <button data-action="zoom-out" title="Zoom out (−)">−</button>
+        <span id="zoom" class="zoom" title="Zoom level">100%</span>
+        <button data-action="zoom-in" title="Zoom in (+)">+</button>
+        <button data-action="fit" title="Fit to window (0)">Fit</button>
+      </div>
+    </header>
+
+    <main class="stage">
+      <svg id="canvas" class="canvas" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Spiral painting"></svg>
+    </main>
+
+    <footer class="status">
+      <span id="status-region"></span>
+      <span id="status-info"></span>
+      <span id="status-message" role="status"></span>
+    </footer>
+
+    <input type="file" id="file-input" accept=".spiral,application/json" hidden />
+
+    <dialog id="new-dialog">
+      <form method="dialog" class="new-form">
+        <h2>New image</h2>
+        <div class="new-body">
+          <div class="fields">
+            <label>Width <input name="width" type="number" min="100" max="4096" step="1" required /></label>
+            <label>Height <input name="height" type="number" min="100" max="4096" step="1" required /></label>
+            <label>Spirals <input name="spiralCount" type="number" min="2" max="12" step="1" required /></label>
+            <label>Start radius <input name="startRadius" type="number" min="0.1" step="any" required /></label>
+            <label>Growth rate <input name="growthRate" type="number" min="0.02" max="2" step="0.01" required /></label>
+            <label
+              >Centre
+              <select name="centreModel">
+                <option value="startRadius">From start radius</option>
+                <option value="origin">From the centre</option>
+              </select>
+            </label>
+            <p class="hint" id="new-hint"></p>
+          </div>
+          <div class="preview">
+            <svg id="new-preview" xmlns="http://www.w3.org/2000/svg"></svg>
+            <p id="new-count" class="count"></p>
+          </div>
+        </div>
+        <p class="errors" id="new-errors" role="alert"></p>
+        <p class="warning" id="new-dirty" hidden>Your current image has unsaved changes. Creating a new image replaces it.</p>
+        <menu>
+          <button value="cancel" formnovalidate>Cancel</button>
+          <button value="create" id="new-create" class="primary">Create</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

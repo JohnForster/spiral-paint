@@ -1,0 +1,270 @@
+:root {
+  --bg: #e9ebef;
+  --panel: #ffffff;
+  --border: #d0d4db;
+  --text: #1f2328;
+  --muted: #5d6673;
+  --accent: #2f6fde;
+  --accent-soft: #dce8fb;
+  --danger: #b42318;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--bg);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+button {
+  font: inherit;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.zoom {
+  min-width: 48px;
+  text-align: center;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+input[type="color"] {
+  width: 36px;
+  height: 30px;
+  padding: 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.swatches {
+  display: grid;
+  grid-template-rows: repeat(2, 13px);
+  grid-auto-flow: column;
+  gap: 2px;
+}
+
+.swatches.recent {
+  padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+
+.swatch {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid rgb(0 0 0 / 25%);
+  border-radius: 2px;
+}
+
+.swatch.current {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.stage {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.canvas.panning {
+  cursor: grabbing;
+}
+
+.canvas-shadow {
+  fill: #fff;
+  filter: drop-shadow(0 1px 4px rgb(0 0 0 / 25%));
+}
+
+.underlay path {
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+
+.spiral-lines path {
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+
+.hover-outline {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+  mix-blend-mode: difference;
+}
+
+.status {
+  display: flex;
+  gap: 24px;
+  padding: 4px 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  min-height: 24px;
+}
+
+#status-message {
+  margin-left: auto;
+  color: var(--text);
+}
+
+#status-message.error {
+  color: var(--danger);
+}
+
+dialog {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  max-width: min(760px, calc(100vw - 32px));
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 30%);
+}
+
+.new-form h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.new-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.fields {
+  display: grid;
+  gap: 8px;
+  width: 280px;
+}
+
+.fields label {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.fields input,
+.fields select {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.preview svg {
+  display: block;
+  width: 360px;
+  height: 240px;
+  max-width: calc(100vw - 72px);
+  background: var(--bg);
+  border-radius: 6px;
+}
+
+.preview path {
+  vector-effect: non-scaling-stroke;
+}
+
+.count {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.errors {
+  color: var(--danger);
+  margin: 10px 0 0;
+  min-height: 1em;
+}
+
+.warning {
+  color: #9a6700;
+  margin: 6px 0 0;
+}
+
+dialog menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+}

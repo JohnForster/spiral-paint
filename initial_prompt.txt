@@ -1,0 +1,40 @@
+Create a web-based painting application called "Spiral Paint" using TypeScript and Vite. It's similar to MS Paint, but instead of coloring pixels, users color regions
+  created by overlapping logarithmic spirals.
+
+  Core Concept:
+  - Multiple logarithmic (exponential) spirals emanate from the same center point
+  - Spirals use the formula: r = a × e^(b × θ)
+  - Each spiral has a direction parameter (1 for clockwise, -1 for counter-clockwise by negating theta)
+  - Where spirals intersect, they create bounded regions that can be painted
+
+  Technical Requirements:
+  1. Use TypeScript for the build system
+  2. Use SVG-based rendering for the canvas and regions
+  3. Vanilla TypeScript or minimal framework (no React/Vue/Angular required)
+
+  Features to Implement:
+
+  Spiral Configuration:
+  - When creating a new image, user can configure:
+    - Canvas width/height
+    - Number of spirals (2-12)
+    - Spiral parameters: start radius, spacing (growth rate), number of turns
+    - Spirals should alternate direction (clockwise/counter-clockwise)
+    - All spirals start from the same center point with evenly distributed rotation offsets
+
+  Painting Tools:
+  - Paint tool: Click or drag to color individual regions
+  - Fill tool: Flood fill to color connected regions
+  - Color picker to select paint color
+  - Undo/redo with full history
+
+  View Controls:
+  - Zoom in/out with mouse wheel
+  - Pan with shift+click or middle mouse button
+  - Toggle spiral line visibility on/off
+
+  File Operations:
+  - Save as .spiral (custom JSON format storing config + region colors)
+  - Open .spiral files
+  - Export as PNG
+  - Export as SVG
