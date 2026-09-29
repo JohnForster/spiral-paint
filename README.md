@@ -35,3 +35,10 @@ See [PLAN.md](PLAN.md). In short: in log-polar coordinates every spiral is a
 straight line, so the regions are cells of a skewed lattice with exact integer
 ids. Topology is derived, never discovered numerically; floating point is only
 used to draw cells and clip them to the canvas.
+
+## Deployment
+
+Every push to `main` runs `.github/workflows/pages.yml`: typecheck, tests,
+build, then deploy of `dist/` to GitHub Pages. Asset paths are relative, so the
+app works under `https://<user>.github.io/spiral-paint/`.
+One-time setup: repo **Settings → Pages → Source: GitHub Actions**.
