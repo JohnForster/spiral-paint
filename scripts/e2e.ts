@@ -247,6 +247,13 @@ try {
   await page.waitForFunction((t) => document.getElementById("scene-count")!.textContent!.startsWith(t), countText(gridSet.regions.length));
   check("dialog preview shows the region count for the 2×2 preset", true, countText(gridSet.regions.length));
   await page.screenshot({ path: `${shotDir}/05-new-dialog.png` });
+  await page.fill('input[name="el-growth"]', "0.3");
+  await page.press('input[name="el-growth"]', "Enter");
+  await page.press('input[name="width"]', "Enter");
+  await page.selectOption('select[name="el-direction"]', "cw");
+  await page.press('select[name="el-direction"]', "Enter");
+  await page.selectOption('select[name="el-direction"]', "alternate");
+  check("Enter in a field doesn't close the dialog", await page.isVisible("#scene-dialog[open]"));
   await page.fill('input[name="el-growth"]', "5");
   await page.waitForFunction(() => (document.getElementById("scene-ok") as HTMLButtonElement).disabled);
   check("invalid settings disable Create", true, (await page.textContent("#scene-errors"))!);

@@ -217,6 +217,12 @@ export function openSceneDialog(mode: Mode, initial: Scene, note: string | null)
   };
   preview.addEventListener("click", onPreviewClick);
   form.addEventListener("input", schedule);
+  // Enter in a field would implicitly submit the form (closing the dialog);
+  // only the Create/Apply and Cancel buttons should close it.
+  const onKeyDown = (ev: KeyboardEvent) => {
+    if (ev.key === "Enter" && (ev.target as Element).matches("input, select")) ev.preventDefault();
+  };
+  form.addEventListener("keydown", onKeyDown);
 
   renderList();
   renderFields();
@@ -230,6 +236,7 @@ export function openSceneDialog(mode: Mode, initial: Scene, note: string | null)
       dialog.removeEventListener("close", onClose);
       clearTimeout(timer);
       form.removeEventListener("input", schedule);
+      form.removeEventListener("keydown", onKeyDown);
       preview.removeEventListener("click", onPreviewClick);
       presetButton.removeEventListener("click", onPreset);
       for (const b of elementButtons) b.removeEventListener("click", onElementButton);
